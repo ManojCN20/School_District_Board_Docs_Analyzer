@@ -1,0 +1,293 @@
+:root {
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  color: #102033;
+  background:
+    radial-gradient(circle at top left, rgba(246, 185, 59, 0.22), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(15, 99, 120, 0.24), transparent 24%),
+    linear-gradient(135deg, #f5f1e8 0%, #eef7f8 52%, #f8fbff 100%);
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: #102033;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.page-shell {
+  width: min(1120px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 32px 0 56px;
+}
+
+.hero-card,
+.workspace-card {
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  border-radius: 28px;
+  box-shadow: 0 30px 80px rgba(16, 32, 51, 0.08);
+}
+
+.hero-card {
+  padding: 36px;
+  margin-bottom: 24px;
+}
+
+.workspace-card {
+  padding: 30px;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #8d4f14;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-family: "Iowan Old Style", "Georgia", serif;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+h1 {
+  font-size: clamp(2.4rem, 5vw, 4.4rem);
+  line-height: 0.95;
+  max-width: 12ch;
+}
+
+h2 {
+  font-size: clamp(1.4rem, 2vw, 1.85rem);
+}
+
+.hero-copy,
+.helper-copy,
+.info-panel p,
+.result-note {
+  margin: 0;
+  color: #365067;
+  font-size: 1rem;
+}
+
+.hero-copy {
+  margin-top: 18px;
+  max-width: 60ch;
+  font-size: 1.05rem;
+}
+
+.info-grid,
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.info-grid {
+  margin-top: 28px;
+}
+
+.info-panel,
+.metric-card,
+.file-input-card,
+.feedback {
+  border-radius: 20px;
+  border: 1px solid rgba(16, 32, 51, 0.08);
+}
+
+.info-panel {
+  padding: 20px;
+  background: linear-gradient(180deg, rgba(255, 250, 242, 0.95), rgba(255, 255, 255, 0.9));
+}
+
+.info-panel h2 {
+  margin-bottom: 10px;
+  font-size: 1.2rem;
+}
+
+.workspace-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: #113845;
+  color: #f7fbfb;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.upload-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.file-input-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 22px;
+  background: linear-gradient(180deg, rgba(238, 247, 248, 0.96), rgba(255, 255, 255, 0.98));
+}
+
+.file-input-label {
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #577084;
+}
+
+.file-input-name {
+  font-size: 1.02rem;
+  color: #102033;
+  font-weight: 600;
+}
+
+.file-input-card input {
+  margin-top: 6px;
+}
+
+.primary-button,
+.download-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 700;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease;
+}
+
+.primary-button {
+  border: none;
+  padding: 0 22px;
+  background: linear-gradient(135deg, #0e606f, #184578);
+  color: white;
+  cursor: pointer;
+  box-shadow: 0 18px 36px rgba(24, 69, 120, 0.22);
+}
+
+.primary-button:hover:not(:disabled),
+.download-link:hover {
+  transform: translateY(-1px);
+}
+
+.primary-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.helper-copy {
+  margin-top: 12px;
+}
+
+.feedback {
+  margin-top: 18px;
+  padding: 16px 18px;
+}
+
+.error-box {
+  background: rgba(166, 33, 17, 0.07);
+  color: #7b2218;
+}
+
+.result-panel {
+  margin-top: 28px;
+  padding: 24px;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(247, 250, 252, 0.98), rgba(237, 246, 244, 0.98));
+  border: 1px solid rgba(16, 32, 51, 0.08);
+}
+
+.metric-grid {
+  margin-top: 20px;
+}
+
+.metric-card {
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.metric-card span {
+  display: block;
+  color: #557086;
+  font-size: 0.95rem;
+}
+
+.metric-card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 2rem;
+  font-family: "Iowan Old Style", "Georgia", serif;
+  color: #102033;
+}
+
+.download-link {
+  padding: 0 20px;
+  background: #f6b93b;
+  color: #102033;
+  box-shadow: 0 16px 30px rgba(246, 185, 59, 0.24);
+}
+
+.result-note {
+  margin-top: 20px;
+}
+
+@media (max-width: 760px) {
+  .page-shell {
+    width: min(100vw - 20px, 1120px);
+    padding-top: 20px;
+    padding-bottom: 40px;
+  }
+
+  .hero-card,
+  .workspace-card,
+  .result-panel {
+    padding: 22px;
+    border-radius: 24px;
+  }
+
+  .workspace-header {
+    flex-direction: column;
+  }
+
+  .status-pill,
+  .download-link {
+    width: 100%;
+  }
+}

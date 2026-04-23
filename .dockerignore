@@ -1,0 +1,7 @@
+node_modules
+client/dist
+data
+.venv
+.DS_Store
+npm-debug.log*
+tests

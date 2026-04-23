@@ -1,0 +1,5 @@
+{
+  "watch": ["server", "python-workdir"],
+  "ext": "js,json,py",
+  "ignore": ["client", "tests", "data", "README.md", "node_modules"]
+}

@@ -1,0 +1,7 @@
+node_modules
+client/dist
+data/uploads/*
+data/outputs/*
+!data/uploads/.gitkeep
+!data/outputs/.gitkeep
+.DS_Store

@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: school-district-boarddocs-backend
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: commit
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PYTHON_BIN
+        value: python3
+      - key: DATA_ROOT
+        value: /app/data
