@@ -42,7 +42,7 @@ WEBSITE_HEADER_HINTS = (
 )
 
 REQUEST_TIMEOUT_SECONDS = 12
-MAX_INTERNAL_PAGES = 20
+MAX_INTERNAL_PAGES = 32
 MAX_TEXT_LENGTH = 10000
 EXCLUDED_SCHEMES = {"mailto", "tel", "javascript"}
 HEADER_FILL = PatternFill("solid", fgColor="123A59")
@@ -101,6 +101,37 @@ GENERAL_NAVIGATION_TERMS = (
     "school board",
     "board of school directors",
     "board meeting",
+)
+ROOT_FALLBACK_PATHS = (
+    "/departments",
+    "/en-US/departments",
+    "/en/departments",
+    "/district-information",
+    "/en-US/district-information",
+    "/school-board",
+    "/en-US/school-board",
+    "/board",
+    "/en-US/board",
+    "/board-meetings",
+    "/board-of-school-directors",
+    "/board-of-education",
+    "/documents",
+    "/documents/school-board",
+    "/documents/board-of-school-directors",
+    "/page/school-board",
+    "/page/board-of-school-directors",
+    "/page/board-of-education",
+    "/page/board-meetings",
+    "/live-feed",
+    "/site-map",
+    "/sitemap",
+)
+RELATED_SITE_FALLBACK_PATHS = (
+    "/site-map",
+    "/sitemap",
+    "/documents",
+    "/documents/school-board",
+    "/page/school-board",
 )
 BOARDDOCS_HOST_HINTS = ("boarddocs.com",)
 BOARDDOCS_STRONG_MEETING_TERMS = (
@@ -574,7 +605,9 @@ def discover_boarddocs_link(
 ) -> dict[str, str] | None:
     queue = [{"url": home_page["url"], "context": home_page["url"], "priority": 100, "page": home_page}]
     queue.extend(build_fallback_seed_candidates(home_page["url"]))
+    queue.extend(build_related_site_seed_candidates(home_page["url"], home_page["html"]))
     visited: set[str] = set()
+    seeded_urls = {candidate["url"] for candidate in queue}
 
     while queue and len(visited) < MAX_INTERNAL_PAGES:
         queue.sort(key=lambda item: item["priority"], reverse=True)
@@ -589,6 +622,12 @@ def discover_boarddocs_link(
         if not current_page:
             continue
 
+        for candidate in build_related_site_seed_candidates(current_page["url"], current_page["html"]):
+            if candidate["url"] in seeded_urls or candidate["url"] in visited:
+                continue
+            seeded_urls.add(candidate["url"])
+            queue.append(candidate)
+
         evidence_segments.extend([current.get("context", current_url), current_page["title"]])
         direct_match, candidate_links = inspect_page(current_page["url"], current_page["html"], current.get("context", ""))
         if direct_match:
@@ -597,6 +636,8 @@ def discover_boarddocs_link(
         for candidate in candidate_links:
             if candidate["url"] in visited:
                 continue
+            if candidate["url"] not in seeded_urls:
+                seeded_urls.add(candidate["url"])
             queue.append(candidate)
 
     return None
@@ -608,19 +649,7 @@ def build_fallback_seed_candidates(home_url: str) -> list[dict[str, object]]:
         return []
 
     base_root = f"{parsed.scheme}://{parsed.netloc}"
-    candidates = [
-        "/departments",
-        "/en-US/departments",
-        "/en/departments",
-        "/district-information",
-        "/en-US/district-information",
-        "/school-board",
-        "/en-US/school-board",
-        "/board",
-        "/en-US/board",
-        "/site-map",
-        "/sitemap",
-    ]
+    candidates = ROOT_FALLBACK_PATHS
 
     seeded: list[dict[str, object]] = []
     seen: set[str] = set()
@@ -636,6 +665,49 @@ def build_fallback_seed_candidates(home_url: str) -> list[dict[str, object]]:
                 "priority": 55,
             }
         )
+
+    return seeded
+
+
+def build_related_site_seed_candidates(page_url: str, html: str) -> list[dict[str, object]]:
+    page_host = urlparse(page_url).netloc.lower()
+    if not page_host:
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+    site_roots: set[str] = set()
+
+    for anchor in soup.find_all("a", href=True):
+        href = normalize_cell(anchor.get("href", ""))
+        if not href:
+            continue
+
+        resolved = urljoin(page_url, href)
+        parsed = urlparse(resolved)
+        target_host = parsed.netloc.lower()
+        if not parsed.scheme or not target_host:
+            continue
+
+        if not hosts_are_related(page_host, target_host):
+            continue
+
+        site_roots.add(f"{parsed.scheme}://{parsed.netloc}")
+
+    seeded: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for root in sorted(site_roots):
+        for path in RELATED_SITE_FALLBACK_PATHS:
+            url = f"{root}{path}"
+            if url in seen:
+                continue
+            seen.add(url)
+            seeded.append(
+                {
+                    "url": url,
+                    "context": f"{root}{path}",
+                    "priority": 65 if path in ("/documents", "/documents/school-board", "/page/school-board") else 50,
+                }
+            )
 
     return seeded
 
