@@ -1,15 +1,15 @@
 # School District BoardDocs Analyzer
 
-A full-stack project that accepts an input workbook of school districts and website links, checks whether each district appears to manage board materials in BoardDocs beyond policy-only pages, and generates a new workbook with two sheets:
+A full-stack project that accepts an input workbook of school districts and website links, supports a two-stage BoardDocs workflow, and generates output workbooks for each stage:
 
-1. `BoardDocs Districts`
-2. `Non BoardDocs Districts`
+1. `Stage 1` finds districts with any BoardDocs usage at all
+2. `Stage 2` verifies the stricter BoardDocs meetings workflow on a smaller list
 
 ## Stack
 
 - React frontend for file upload and results download
 - Node.js + Express API for upload orchestration
-- Python worker for Excel processing and website analysis
+- Node.js analyzers for Excel processing and website analysis
 
 ## Expected Input
 
@@ -20,30 +20,53 @@ The app reads the first sheet in the uploaded workbook and looks for:
 
 The processor supports `.xlsx`, `.xlsm`, and `.csv` inputs.
 
-## Output Workbook
+## Workflow
+
+### Stage 1
+
+The fast scanner:
+
+1. Loads the district rows from the first sheet.
+2. Fetches district pages with standard HTTP requests.
+3. Looks for school-board-related links such as `School Board`, `Board of Education`, `Board Policies`, `Agenda`, `Minutes`, and similar paths.
+4. Visits those targeted board-related pages and checks for any BoardDocs link or BoardDocs host reference.
 
 The generated workbook contains:
 
-- `BoardDocs Districts` with `School District Name`, `Website Link`, and `BoardDocs Link`
-- `Non BoardDocs Districts` with `School District Name` and `Website Link`
+- `BoardDocs Detected`
+- `No BoardDocs Detected`
 
-## Classification Logic
+Each Stage 1 sheet now includes a `Pages Checked` column so you can see which district pages were inspected before the scanner decided whether any BoardDocs evidence was present.
 
-The Python worker:
+### Stage 2
+
+The stricter verifier:
 
 1. Loads the district rows from the first sheet.
-2. Visits the district website.
-3. Looks for direct or nearby references to BoardDocs.
-4. Tries to distinguish broader board-document usage from policy-only references.
+2. Reuses the fast BoardDocs discovery path from Stage 1.
+3. Uses Playwright for the stricter BoardDocs verification step.
+4. Looks for a BoardDocs link on the district website.
+5. Visits the BoardDocs page, opens Meetings, and checks for a visible year such as `2024` or `2025`.
 
-If a BoardDocs reference is found and the evidence suggests agendas, meetings, minutes, or other board-material usage beyond policies alone, the district is placed in the `BoardDocs Districts` sheet.
+The generated workbook contains:
+
+- `BoardDocs Districts`
+- `Non BoardDocs Districts`
+
+This is best run on the smaller Stage 1 positive set.
 
 ## Run Locally
 
-Install Python dependencies once:
+Install Node dependencies once:
 
 ```bash
-python3 -m pip install -r requirements.txt
+npm install
+```
+
+Install the Playwright browser once:
+
+```bash
+npm run setup:browser
 ```
 
 Then start the app:
@@ -57,6 +80,11 @@ That starts:
 - React UI at `http://localhost:5173`
 - Express API at `http://localhost:3001`
 
+Inside the UI:
+
+- Use `Stage 1` for large uploads such as 500 to 1000 districts
+- Use `Stage 2` for the smaller list that already showed BoardDocs presence
+
 For a production build:
 
 ```bash
@@ -69,13 +97,13 @@ npm start
 Netlify is a good fit for the React frontend in this repo. The current backend is not Netlify-ready as-is because this project uses:
 
 - an Express server
-- a Python worker
+- Playwright for the stricter verification step
 - local output files under `data/outputs/`
 
 The easiest deployment model is:
 
 1. Deploy the frontend on Netlify
-2. Deploy the Node.js + Python backend on another host
+2. Deploy the Node.js backend on another host
 3. Point the frontend to that backend with `VITE_API_BASE_URL`
 
 ### Files already prepared
@@ -107,14 +135,14 @@ If you deploy only the frontend to Netlify without a separate backend, the uploa
 The easiest first deployment for the backend is a single Render web service that runs:
 
 - the Express API
-- the Python analyzer
+- the Node.js analyzers
 - the built React files served by Express
 
 This repo now includes:
 
-- [Dockerfile](/Users/manojcn/Documents/Codex/2026-04-23-i-want-to-create-a-project/Dockerfile)
-- [render.yaml](/Users/manojcn/Documents/Codex/2026-04-23-i-want-to-create-a-project/render.yaml)
-- [.dockerignore](/Users/manojcn/Documents/Codex/2026-04-23-i-want-to-create-a-project/.dockerignore)
+- [Dockerfile](./Dockerfile)
+- [render.yaml](./render.yaml)
+- [.dockerignore](./.dockerignore)
 
 ### Recommended first deployment
 
@@ -122,7 +150,7 @@ This repo now includes:
 2. Create a new Render `Web Service`.
 3. Choose the repository.
 4. Select `Docker` as the runtime.
-5. Render will use [Dockerfile](/Users/manojcn/Documents/Codex/2026-04-23-i-want-to-create-a-project/Dockerfile).
+5. Render will use [Dockerfile](./Dockerfile).
 6. Set the health check path to:
 
 ```text
@@ -137,19 +165,17 @@ After deployment, open:
 https://your-render-service.onrender.com/api/health
 ```
 
-You should get JSON showing `ok: true` and `pythonReady: true`.
+You should get JSON showing `ok: true` and `analyzerReady: true`.
 
 ### Environment variables
 
 The backend works without extra variables, but these are the useful ones:
 
 ```bash
-PYTHON_BIN=python3
 DATA_ROOT=/app/data
 CORS_ORIGIN=https://your-netlify-site.netlify.app
 ```
 
-- `PYTHON_BIN` tells the API which Python executable to use
 - `DATA_ROOT` controls where uploaded files and generated output workbooks are stored
 - `CORS_ORIGIN` should be set to your Netlify frontend domain once the frontend is deployed
 
@@ -177,7 +203,7 @@ Important:
 
 ### Render Blueprint option
 
-If you want Render to read the deployment config from the repo, use [render.yaml](/Users/manojcn/Documents/Codex/2026-04-23-i-want-to-create-a-project/render.yaml). It creates one Docker-based web service with:
+If you want Render to read the deployment config from the repo, use [render.yaml](./render.yaml). It creates one Docker-based web service with:
 
 - `runtime: docker`
 - `plan: free`
@@ -193,8 +219,7 @@ client/
   src/
 server/
   index.js
-python-workdir/
-  analyze_districts.py
+  analyzers/
 data/
   uploads/
   outputs/
@@ -205,4 +230,4 @@ data/
 - District websites can be inconsistent, so the BoardDocs classification is heuristic rather than absolute.
 - The app keeps generated workbooks under `data/outputs/`.
 - If a district website is missing or inaccessible, the district is placed in the non-BoardDocs sheet.
-- If the backend picks the wrong Python runtime, start it with `PYTHON_BIN=/full/path/to/python3 npm run dev:server`.
+- If Playwright is installed but Chromium is missing, run `npm run setup:browser`.

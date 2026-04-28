@@ -2,20 +2,20 @@
   "name": "2026-04-23-i-want-to-create-a-project",
   "version": "1.0.0",
   "private": true,
-  "description": "React + Node.js + Python application for classifying school districts by BoardDocs usage.",
+  "description": "React + Node.js application for classifying school districts by BoardDocs usage.",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "node server/index.js",
     "dev:client": "vite --config client/vite.config.js",
-    "setup:python": "python3 -m pip install -r requirements.txt",
+    "setup:browser": "playwright install chromium",
     "build": "vite build --config client/vite.config.js",
     "start": "node server/index.js"
   },
   "keywords": [
     "react",
     "express",
-    "python",
+    "cheerio",
     "excel",
     "boarddocs"
   ],
@@ -23,13 +23,16 @@
   "license": "MIT",
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.1",
+    "cheerio": "^1.1.2",
     "concurrently": "^9.2.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "multer": "^2.1.1",
     "nodemon": "^3.1.14",
+    "playwright": "^1.55.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "xlsx": "^0.18.5"
   }
 }

@@ -11,7 +11,5 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PYTHON_BIN
-        value: python3
       - key: DATA_ROOT
         value: /app/data

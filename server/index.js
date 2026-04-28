@@ -1,9 +1,8 @@
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
-import { execFile, spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import cors from "cors";
 import express from "express";
@@ -14,16 +13,18 @@ const workspaceRoot = path.resolve(__dirname, "..");
 const dataRoot = path.resolve(process.env.DATA_ROOT || path.join(workspaceRoot, "data"));
 const uploadRoot = path.join(dataRoot, "uploads");
 const outputRoot = path.join(dataRoot, "outputs");
-const pythonScriptPath = path.join(workspaceRoot, "python-workdir", "analyze_districts.py");
 const clientDistPath = path.join(workspaceRoot, "client", "dist");
-const execFileAsync = promisify(execFile);
-const requiredPythonModules = ["requests", "bs4", "openpyxl"];
+const analyzerLoaders = {
+  stage1: async () => (await import("./analyzers/stage1.js")).analyzeStage1,
+  stage2: async () => (await import("./analyzers/stage2.js")).analyzeStage2,
+};
+const requiredNodePackages = ["xlsx", "cheerio", "playwright"];
 
 const app = express();
 const port = Number.parseInt(process.env.PORT ?? "3001", 10);
 const host = process.env.HOST ?? "0.0.0.0";
-let pythonBinary = process.env.PYTHON_BIN || "python3";
-let pythonRuntimeError = null;
+let analyzerRuntimeError = null;
+let httpServer = null;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -41,42 +42,65 @@ app.use(express.json());
 app.use("/downloads", express.static(outputRoot));
 
 app.get("/api/health", (_req, res) => {
-  res.status(pythonRuntimeError ? 503 : 200).json({
-    ok: !pythonRuntimeError,
-    pythonBinary,
-    pythonReady: !pythonRuntimeError,
-    pythonRuntimeError,
+  res.status(analyzerRuntimeError ? 503 : 200).json({
+    ok: !analyzerRuntimeError,
+    analyzer: "node",
+    analyzerReady: !analyzerRuntimeError,
+    analyzerRuntimeError,
     dataRoot,
   });
 });
 
+app.post("/api/analyze/stage1", upload.single("file"), async (req, res) => {
+  await handleAnalyzeRequest(req, res, {
+    stage: "stage1",
+    outputFileName: "district-boarddocs-presence-results.xlsx",
+  });
+});
+
+app.post("/api/analyze/stage2", upload.single("file"), async (req, res) => {
+  await handleAnalyzeRequest(req, res, {
+    stage: "stage2",
+    outputFileName: "district-boarddocs-verification-results.xlsx",
+  });
+});
+
 app.post("/api/analyze", upload.single("file"), async (req, res) => {
-  if (pythonRuntimeError) {
-    return res.status(500).json({
-      error: pythonRuntimeError,
+  await handleAnalyzeRequest(req, res, {
+    stage: "stage2",
+    outputFileName: "district-boarddocs-verification-results.xlsx",
+  });
+});
+
+async function handleAnalyzeRequest(req, res, { stage, outputFileName }) {
+  if (analyzerRuntimeError) {
+    res.status(500).json({
+      error: analyzerRuntimeError,
     });
+    return;
   }
 
   if (!req.file) {
-    return res.status(400).json({
+    res.status(400).json({
       error: "Upload an Excel or CSV file in the `file` field.",
     });
+    return;
   }
 
   const extension = path.extname(req.file.originalname).toLowerCase();
   const supportedExtensions = new Set([".xlsx", ".xlsm", ".csv"]);
-
   if (!supportedExtensions.has(extension)) {
-    return res.status(400).json({
+    res.status(400).json({
       error: "Unsupported file type. Use .xlsx, .xlsm, or .csv.",
     });
+    return;
   }
 
   const jobId = buildJobId();
   const uploadDir = path.join(uploadRoot, jobId);
   const outputDir = path.join(outputRoot, jobId);
   const inputPath = path.join(uploadDir, `district-input${extension}`);
-  const outputPath = path.join(outputDir, "district-boarddocs-results.xlsx");
+  const outputPath = path.join(outputDir, outputFileName);
 
   try {
     await fsPromises.mkdir(uploadDir, { recursive: true });
@@ -84,10 +108,12 @@ app.post("/api/analyze", upload.single("file"), async (req, res) => {
     await fsPromises.writeFile(inputPath, req.file.buffer);
 
     const startedAt = Date.now();
-    const analyzerResult = await runAnalyzer({ inputPath, outputPath });
+    const analyze = await loadAnalyzer(stage);
+    const analyzerResult = await analyze({ inputPath, outputPath });
     const elapsedSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(1));
 
-    return res.json({
+    res.json({
+      stage,
       jobId,
       fileName: path.basename(outputPath),
       downloadUrl: `/downloads/${jobId}/${path.basename(outputPath)}`,
@@ -98,14 +124,14 @@ app.post("/api/analyze", upload.single("file"), async (req, res) => {
     });
   } catch (error) {
     console.error("Analysis failed:", error);
-    return res.status(500).json({
+    res.status(500).json({
       error:
         error instanceof Error
           ? error.message
           : "The analysis process failed unexpectedly.",
     });
   }
-});
+}
 
 if (fs.existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
@@ -122,16 +148,21 @@ async function bootstrap() {
   await fsPromises.mkdir(outputRoot, { recursive: true });
 
   try {
-    pythonBinary = await resolvePythonBinary();
-    console.log(`Python analyzer runtime: ${pythonBinary}`);
+    await validateAnalyzerRuntime();
+    console.log("Node analyzer runtime ready");
   } catch (error) {
-    pythonRuntimeError =
-      error instanceof Error ? error.message : "Unable to validate the Python runtime.";
-    console.error(pythonRuntimeError);
+    analyzerRuntimeError =
+      error instanceof Error ? error.message : "Unable to validate the Node analyzer runtime.";
+    console.error(analyzerRuntimeError);
   }
 
-  app.listen(port, host, () => {
+  httpServer = app.listen(port, host, () => {
     console.log(`Server listening on ${buildServerUrl()}`);
+  });
+
+  httpServer.on("error", (error) => {
+    console.error(`Server failed to start: ${error.message}`);
+    process.exitCode = 1;
   });
 }
 
@@ -141,112 +172,31 @@ function buildJobId() {
   return `${stamp}-${randomPart}`;
 }
 
-function runAnalyzer({ inputPath, outputPath }) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      pythonBinary,
-      [pythonScriptPath, "--input", inputPath, "--output", outputPath],
-      {
-        cwd: workspaceRoot,
-        env: {
-          ...process.env,
-          PYTHONUNBUFFERED: "1",
-        },
-      },
-    );
+async function validateAnalyzerRuntime() {
+  const require = createRequire(import.meta.url);
+  const missingPackages = [];
 
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (error) => {
-      reject(
-        new Error(
-          `Unable to start the Python analyzer with "${pythonBinary}": ${error.message}`,
-        ),
-      );
-    });
-
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(
-          new Error(
-            `Python analyzer exited with code ${code}.${stderr ? ` ${stderr.trim()}` : ""}`,
-          ),
-        );
-        return;
-      }
-
-      try {
-        const jsonLine = stdout
-          .trim()
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .at(-1);
-
-        if (!jsonLine) {
-          throw new Error("The analyzer returned no JSON payload.");
-        }
-
-        resolve(JSON.parse(jsonLine));
-      } catch (error) {
-        reject(
-          new Error(
-            `Analyzer completed but returned unreadable output.${stderr ? ` ${stderr.trim()}` : ""}`,
-          ),
-        );
-      }
-    });
-  });
-}
-
-async function resolvePythonBinary() {
-  const candidates = [
-    process.env.PYTHON_BIN,
-    "python3",
-    "python",
-    "/opt/anaconda3/bin/python3",
-    "/usr/local/bin/python3",
-    "/usr/bin/python3",
-  ].filter(Boolean);
-
-  const uniqueCandidates = [...new Set(candidates)];
-  const importCommand = `import ${requiredPythonModules.join(", ")}; print("ok")`;
-  const failures = [];
-
-  for (const candidate of uniqueCandidates) {
+  for (const packageName of requiredNodePackages) {
     try {
-      const { stdout } = await execFileAsync(candidate, ["-c", importCommand], {
-        cwd: workspaceRoot,
-        env: process.env,
-        timeout: 8000,
-      });
-
-      if (stdout.includes("ok")) {
-        return candidate;
-      }
-    } catch (error) {
-      const stderr = error?.stderr?.toString?.().trim?.() || error.message;
-      failures.push(`${candidate}: ${stderr}`);
+      require.resolve(packageName);
+    } catch {
+      missingPackages.push(packageName);
     }
   }
 
-  const installHint =
-    "Install the Python packages with `python3 -m pip install -r requirements.txt`, or start the server with `PYTHON_BIN=/full/path/to/python3 npm run dev:server`.";
-  const detail = failures.length > 0 ? ` Checked: ${failures.join(" | ")}` : "";
-  throw new Error(
-    `No usable Python runtime was found with ${requiredPythonModules.join(
-      ", ",
-    )} installed. ${installHint}${detail}`,
-  );
+  if (missingPackages.length > 0) {
+    throw new Error(
+      `Missing Node analyzer packages: ${missingPackages.join(", ")}. Run \`npm install\`, then \`npm run setup:browser\`.`,
+    );
+  }
+}
+
+async function loadAnalyzer(stage) {
+  const loader = analyzerLoaders[stage];
+  if (!loader) {
+    throw new Error(`Unknown analyzer stage: ${stage}`);
+  }
+  return loader();
 }
 
 function buildCorsOriginSetting(rawValue) {
