@@ -41,6 +41,21 @@ function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(value ?? 0);
 }
 
+function formatDuration(seconds) {
+  const totalSeconds = Math.max(0, Math.round(seconds || 0));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+  return `${remainingSeconds}s`;
+}
+
 function buildApiUrl(path) {
   return apiBaseUrl ? `${apiBaseUrl}${path}` : path;
 }
@@ -80,9 +95,75 @@ export default function App() {
   const [file, setFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [job, setJob] = useState(null);
+  const [partialResult, setPartialResult] = useState(null);
   const [result, setResult] = useState(initialResult);
   const [apiStatus, setApiStatus] = useState("Checking API...");
   const stage = stages[stageId];
+
+  useEffect(() => {
+    if (!result?.downloadUrl) {
+      return;
+    }
+
+    const downloadHref = buildDownloadUrl(result.downloadUrl);
+    if (!downloadHref) {
+      return;
+    }
+
+    const link = document.createElement("a");
+    link.href = downloadHref;
+    link.download = result.fileName || "";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }, [result?.downloadUrl, result?.fileName]);
+
+  useEffect(() => {
+    if (!job?.jobId || ["completed", "failed", "cancelled"].includes(job.status)) {
+      return undefined;
+    }
+
+    let isCancelled = false;
+    const interval = window.setInterval(async () => {
+      try {
+        const response = await fetch(buildApiUrl(`/api/jobs/${job.jobId}`));
+        const payload = await readJsonResponse(response);
+
+        if (isCancelled) {
+          return;
+        }
+
+        setJob(payload);
+
+        if (payload.status === "completed") {
+          setResult(payload);
+          setIsSubmitting(false);
+        } else if (payload.status === "cancelled") {
+          setResult(payload);
+          setPartialResult(payload);
+          setIsSubmitting(false);
+        } else if (payload.status === "failed") {
+          setError(payload.error || "The analysis request failed.");
+          if (payload.downloadUrl) {
+            setPartialResult(payload);
+          }
+          setIsSubmitting(false);
+        }
+      } catch {
+        if (!isCancelled) {
+          setError("Lost contact with the analysis job.");
+          setIsSubmitting(false);
+        }
+      }
+    }, 1500);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [job?.jobId, job?.status]);
 
   useEffect(() => {
     let isActive = true;
@@ -125,7 +206,9 @@ export default function App() {
     }
 
     setError("");
+    setPartialResult(null);
     setResult(null);
+    setJob(null);
     setIsSubmitting(true);
 
     try {
@@ -140,18 +223,53 @@ export default function App() {
       const payload = await readJsonResponse(response);
 
       if (!response.ok) {
+        if (payload.partialAvailable) {
+          setPartialResult(payload);
+        }
         throw new Error(payload.error || "The analysis request failed.");
       }
 
-      setResult(payload);
+      setJob(payload);
     } catch (requestError) {
       setError(requestError.message || "Unable to process the workbook.");
-    } finally {
       setIsSubmitting(false);
     }
   }
 
-  const summary = result?.summary;
+  async function handleStop() {
+    if (!job?.jobId || !["queued", "running", "stopping"].includes(job.status)) {
+      return;
+    }
+
+    try {
+      setError("");
+      const response = await fetch(buildApiUrl(`/api/jobs/${job.jobId}/stop`), {
+        method: "POST",
+      });
+      const payload = await readJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to stop the analysis job.");
+      }
+      setJob(payload);
+    } catch (stopError) {
+      setError(stopError.message || "Unable to stop the analysis job.");
+    }
+  }
+
+  const progress = job || result;
+  const summary = progress?.summary;
+  const progressStatus =
+    progress?.status === "running"
+      ? `Analyzing ${progress.currentDistrictName || "districts"}`
+      : progress?.status === "stopping"
+        ? `Stopping after ${progress.currentDistrictName || "the current district"}`
+        : progress?.status === "cancelled"
+          ? "Analysis stopped"
+          : progress?.status === "completed"
+            ? "Analysis complete"
+            : progress?.status === "failed"
+              ? "Analysis stopped"
+              : null;
 
   return (
     <main className="page-shell">
@@ -188,6 +306,8 @@ export default function App() {
               onClick={() => {
                 setStageId(mode.id);
                 setError("");
+                setPartialResult(null);
+                setJob(null);
                 setResult(null);
               }}
             >
@@ -204,7 +324,7 @@ export default function App() {
             <p className="stage-copy">{stage.subtitle}</p>
           </div>
           <span className="status-pill">
-            {isSubmitting ? stage.runningLabel : apiStatus}
+            {progressStatus || (isSubmitting ? stage.runningLabel : apiStatus)}
           </span>
         </div>
 
@@ -222,56 +342,140 @@ export default function App() {
             />
           </label>
 
-          <button
-            className="primary-button"
-            type="submit"
-            disabled={isSubmitting}
-          >
-            {isSubmitting ? stage.runningLabel : stage.buttonLabel}
-          </button>
+          <div className="form-actions">
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? stage.runningLabel : stage.buttonLabel}
+            </button>
+            {job?.jobId && ["queued", "running", "stopping"].includes(job.status) ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={handleStop}
+                disabled={job.status === "stopping"}
+              >
+                {job.status === "stopping" ? "Stopping..." : "Stop"}
+              </button>
+            ) : null}
+          </div>
         </form>
 
         <p className="helper-copy">{stage.helperCopy}</p>
 
         {error ? <div className="feedback error-box">{error}</div> : null}
+        {partialResult?.downloadUrl ? (
+          <div className="feedback partial-box">
+            Partial workbook available:{" "}
+            <a className="download-link inline-link" href={buildDownloadUrl(partialResult.downloadUrl)}>
+              Download partial output
+            </a>
+            {partialResult.remainingDownloadUrl ? (
+              <>
+                {" "}and{" "}
+                <a
+                  className="download-link inline-link"
+                  href={buildDownloadUrl(partialResult.remainingDownloadUrl)}
+                >
+                  download remaining districts
+                </a>
+              </>
+            ) : null}
+          </div>
+        ) : null}
 
-        {summary ? (
+        {progress ? (
           <section className="result-panel">
             <div className="workspace-header">
               <div>
-                <p className="eyebrow">Results</p>
-                <h2>Workbook ready</h2>
+                <p className="eyebrow">Progress</p>
+                <h2>
+                  {progress.status === "completed"
+                    ? "Workbook ready"
+                    : progress.status === "cancelled"
+                      ? "Run stopped"
+                      : progress.status === "failed"
+                        ? "Run stopped"
+                        : progress.status === "stopping"
+                          ? "Stopping after current district"
+                          : "Analysis running"}
+                </h2>
               </div>
-              <a
-                className="download-link"
-                href={buildDownloadUrl(result.downloadUrl)}
-              >
-                Download output
-              </a>
+              {progress.downloadUrl ? (
+                <a
+                  className="download-link"
+                  href={buildDownloadUrl(progress.downloadUrl)}
+                >
+                  {progress.status === "completed" ? "Download output" : "Download checkpoint"}
+                </a>
+              ) : null}
             </div>
 
             <div className="metric-grid">
               <article className="metric-card">
                 <span>Total districts</span>
-                <strong>{formatNumber(summary.totalDistricts)}</strong>
+                <strong>{formatNumber(progress.totalDistricts)}</strong>
               </article>
               <article className="metric-card">
-                <span>{stage.positiveLabel}</span>
-                <strong>{formatNumber(summary.boardDocsCount)}</strong>
+                <span>Completed</span>
+                <strong>{formatNumber(progress.completedDistricts)}</strong>
               </article>
               <article className="metric-card">
-                <span>{stage.negativeLabel}</span>
-                <strong>{formatNumber(summary.nonBoardDocsCount)}</strong>
+                <span>Remaining</span>
+                <strong>{formatNumber(progress.remainingDistricts)}</strong>
               </article>
               <article className="metric-card">
-                <span>Elapsed seconds</span>
-                <strong>{formatNumber(summary.elapsedSeconds)}</strong>
+                <span>Elapsed</span>
+                <strong>{formatDuration(progress.elapsedSeconds)}</strong>
               </article>
             </div>
 
             <div className="result-note">
-              Output file: <strong>{result.fileName}</strong>
+              Current district(s):{" "}
+              <strong>{progress.currentDistrictName || "Waiting for the next district"}</strong>
             </div>
+
+            <div className="result-note">
+              Estimated time remaining:{" "}
+              <strong>
+                {progress.estimatedSecondsRemaining
+                  ? formatDuration(progress.estimatedSecondsRemaining)
+                  : "Calculating..."}
+              </strong>
+            </div>
+
+            {progress.remainingDownloadUrl && progress.status !== "completed" ? (
+              <div className="result-note">
+                Remaining districts file:{" "}
+                <a
+                  className="download-link inline-link"
+                  href={buildDownloadUrl(progress.remainingDownloadUrl)}
+                >
+                  Download remaining districts
+                </a>
+              </div>
+            ) : null}
+
+            {summary ? (
+              <>
+                <div className="metric-grid summary-grid">
+                  <article className="metric-card">
+                    <span>{stage.positiveLabel}</span>
+                    <strong>{formatNumber(summary.boardDocsCount)}</strong>
+                  </article>
+                  <article className="metric-card">
+                    <span>{stage.negativeLabel}</span>
+                    <strong>{formatNumber(summary.nonBoardDocsCount)}</strong>
+                  </article>
+                </div>
+
+                <div className="result-note">
+                  Output file: <strong>{result.fileName}</strong>
+                </div>
+              </>
+            ) : null}
           </section>
         ) : null}
       </section>

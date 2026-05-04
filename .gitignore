@@ -2,6 +2,7 @@ node_modules
 client/dist
 data/uploads/*
 data/outputs/*
+data/crawl-cache/*
 !data/uploads/.gitkeep
 !data/outputs/.gitkeep
 .DS_Store

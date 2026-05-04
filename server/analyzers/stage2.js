@@ -5,14 +5,23 @@ import {
   YEAR_PATTERN,
   buildSummary,
   exportWorkbook,
+  exportRemainingDistrictsWorkbook,
   formatPagesChecked,
   readDistricts,
 } from "./shared.js";
 import { discoverBoarddocsLinkForDistrict } from "./stage1.js";
 
 const MEETING_TAB_TERMS = ["meeting", "meetings", "search meetings", "featured meetings"];
+const CHECKPOINT_INTERVAL = 10;
+const DISTRICT_TIMEOUT_MS = 180000;
 
-export async function analyzeStage2({ inputPath, outputPath }) {
+export async function analyzeStage2({
+  inputPath,
+  outputPath,
+  remainingPath,
+  onProgress,
+  shouldStop,
+}) {
   const districts = await readDistricts(inputPath);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -22,16 +31,74 @@ export async function analyzeStage2({ inputPath, outputPath }) {
   });
 
   const results = [];
+  let cancelled = false;
+  onProgress?.({
+    totalDistricts: districts.length,
+    completedDistricts: 0,
+    remainingDistricts: districts.length,
+    currentDistrictName: "",
+  });
 
   try {
-    for (const district of districts) {
-      results.push(await analyzeDistrictVerification(context, district));
+    for (let index = 0; index < districts.length; index += 1) {
+      if (shouldStop?.()) {
+        cancelled = true;
+        if (remainingPath) {
+          await exportRemainingDistrictsWorkbook(remainingPath, districts.slice(index));
+        }
+        break;
+      }
+
+      const district = districts[index];
+      onProgress?.({
+        totalDistricts: districts.length,
+        completedDistricts: index,
+        remainingDistricts: districts.length - index,
+        currentDistrictName: district.districtName,
+      });
+
+      try {
+        results.push(await withDistrictTimeout(analyzeDistrictVerification(context, district), district.districtName));
+      } catch (error) {
+        results.push(buildDistrictFailureRow(district, error));
+      }
+
+      if ((index + 1) % CHECKPOINT_INTERVAL === 0 || index === districts.length - 1) {
+        await writeStage2Workbook(outputPath, results);
+        if (remainingPath) {
+          await exportRemainingDistrictsWorkbook(remainingPath, districts.slice(index + 1));
+        }
+      }
+
+      if (shouldStop?.()) {
+        cancelled = true;
+        if (remainingPath) {
+          await exportRemainingDistrictsWorkbook(remainingPath, districts.slice(index + 1));
+        }
+        break;
+      }
+
+      onProgress?.({
+        totalDistricts: districts.length,
+        completedDistricts: index + 1,
+        remainingDistricts: districts.length - (index + 1),
+        currentDistrictName: index + 1 < districts.length ? districts[index + 1].districtName : "",
+      });
     }
   } finally {
     await context.close();
     await browser.close();
   }
 
+  await writeStage2Workbook(outputPath, results);
+  if (remainingPath && !cancelled) {
+    await exportRemainingDistrictsWorkbook(remainingPath, []);
+  }
+
+  return { summary: buildSummary(results), cancelled };
+}
+
+async function writeStage2Workbook(outputPath, results) {
   const boarddocsRows = results.filter((row) => row.isBoarddocs);
   const nonBoarddocsRows = results.filter((row) => !row.isBoarddocs);
 
@@ -73,8 +140,6 @@ export async function analyzeStage2({ inputPath, outputPath }) {
       ]),
     },
   ]);
-
-  return { summary: buildSummary(results) };
 }
 
 async function analyzeDistrictVerification(context, district) {
@@ -238,4 +303,39 @@ function labelsContainTerms(labels, terms) {
     }
   }
   return false;
+}
+
+function buildDistrictFailureRow(district, error) {
+  return {
+    districtName: district.districtName,
+    websiteLink: district.websiteLink,
+    boarddocsLink: "",
+    isBoarddocs: false,
+    reason: `District analysis failed: ${String(error?.message || error).slice(0, 180)}`,
+    confidence: "low",
+    pagesChecked: "",
+  };
+}
+
+function withDistrictTimeout(promise, districtName) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          `District timed out after ${Math.round(DISTRICT_TIMEOUT_MS / 1000)} seconds: ${districtName}`,
+        ),
+      );
+    }, DISTRICT_TIMEOUT_MS);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
